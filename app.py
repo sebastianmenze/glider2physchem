@@ -49,13 +49,21 @@ PROCESSED_DIR = os.path.join(DATA_DIR, 'processed')
 os.makedirs(RAW_DIR, exist_ok=True)
 os.makedirs(PROCESSED_DIR, exist_ok=True)
 
-SFMC_HOST        = os.environ.get('SFMC_HOST', 'sfmc.webbresearch.com')
-SFMC_USER        = os.environ.get('SFMC_USER', '')
-SFMC_PASSWORD    = os.environ.get('SFMC_PASSWORD', '') or None
-SFMC_KEY         = os.environ.get('SFMC_KEY', '') or None
-SFMC_REMOTE_PATH = os.environ.get('SFMC_REMOTE_PATH',
-                                   '/var/opt/sfmc-dockserver/stations/bergen/gliders/var')
-SYNC_INTERVAL    = int(os.environ.get('SYNC_INTERVAL_MINUTES', '30'))
+SFMC_HOST      = os.environ.get('SFMC_HOST', 'sfmc.webbresearch.com')
+SFMC_USER      = os.environ.get('SFMC_USER', '')
+SFMC_PASSWORD  = os.environ.get('SFMC_PASSWORD', '') or None
+SFMC_KEY       = os.environ.get('SFMC_KEY', '') or None
+SYNC_INTERVAL  = int(os.environ.get('SYNC_INTERVAL_MINUTES', '30'))
+
+# Support SFMC_REMOTE_PATHS (comma-separated) or legacy SFMC_REMOTE_PATH
+_raw_paths = (
+    os.environ.get('SFMC_REMOTE_PATHS')
+    or os.environ.get('SFMC_REMOTE_PATH', '')
+)
+SFMC_REMOTE_PATHS = [p.strip() for p in _raw_paths.split(',') if p.strip()]
+if not SFMC_REMOTE_PATHS:
+    SFMC_REMOTE_PATHS = ['/var/opt/sfmc-dockserver/stations/bergen/gliders/var',
+                         '/var/opt/sfmc-dockserver/stations/bergen/gliders/fulla']
 
 GLIDER_PALETTE = [
     '#2196F3', '#4CAF50', '#FF9800', '#E91E63', '#9C27B0',
@@ -165,14 +173,17 @@ def run_sync():
         try:
             logger.info("Starting data sync…")
             if SFMC_USER:
-                sync_glider_data(
-                    hostname=SFMC_HOST,
-                    username=SFMC_USER,
-                    password=SFMC_PASSWORD,
-                    key_filename=SFMC_KEY,
-                    remote_path=SFMC_REMOTE_PATH,
-                    local_path=os.path.join(RAW_DIR, 'var'),
-                )
+                for remote_path in SFMC_REMOTE_PATHS:
+                    local_subdir = os.path.basename(remote_path.rstrip('/'))
+                    logger.info("Syncing %s → raw/%s", remote_path, local_subdir)
+                    sync_glider_data(
+                        hostname=SFMC_HOST,
+                        username=SFMC_USER,
+                        password=SFMC_PASSWORD,
+                        key_filename=SFMC_KEY,
+                        remote_path=remote_path,
+                        local_path=os.path.join(RAW_DIR, local_subdir),
+                    )
             process_all_gliders(RAW_DIR, PROCESSED_DIR)
             _last_sync_time = datetime.now(timezone.utc)
             logger.info("Sync complete at %s", _last_sync_time)
