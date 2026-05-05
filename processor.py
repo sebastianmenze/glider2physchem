@@ -11,8 +11,13 @@ Supported file combinations (tried in order per directory):
 
 A "mission" is a continuous stretch of data; gaps > MISSION_GAP_DAYS days
 are treated as separate missions.
+
+Cache files (.cac) are required by dbdreader to decode the binary format.
+If a cache file is missing the processor will log a WARNING with the exact
+filename needed so you can copy it into the CAC_DIR.
 """
 import os
+import re
 import glob
 import logging
 
@@ -20,6 +25,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 import gsw
+import dbdreader
 from dbdreader import DBD
 
 logger = logging.getLogger(__name__)
@@ -32,11 +38,53 @@ BINS = _BINS_CALC[:-1] + BIN_INTERVAL / 2   # bin centres
 
 MISSION_GAP_DAYS = 7
 
+# ── Cache-error helpers ────────────────────────────────────────────────────────
+
+_missing_cac_warned: set[str] = set()   # avoid repeating the same warning
+
+
+def _log_missing_cac(exc: Exception, filepath: str, cac_dir: str) -> None:
+    """Emit a clear WARNING for every missing .cac hash in a DbdError."""
+    # e.data is MissingCacheFileData(missing_cache_files={hash: [files]}, cache_dir=...)
+    try:
+        missing: dict = exc.data.missing_cache_files
+    except AttributeError:
+        missing = {}
+        # fall back to regex on the message string
+        for m in re.finditer(r'\b([0-9a-f]{8})\b', str(exc)):
+            missing[m.group(1)] = [filepath]
+
+    for hash_name, files in missing.items():
+        if hash_name not in _missing_cac_warned:
+            _missing_cac_warned.add(hash_name)
+            logger.warning(
+                "Missing cache file: %s.cac  (needed for %s)\n"
+                "  → Copy %s.cac into %s and restart.",
+                hash_name,
+                ", ".join(os.path.basename(f) for f in files),
+                hash_name,
+                cac_dir,
+            )
+
+
+def _open_dbd(filepath: str, cac_dir: str):
+    """
+    Open a DBD file with the given cache directory.
+    Returns a DBD object or None, logging a clear message on cache miss.
+    """
+    try:
+        return DBD(filepath, cacheDir=cac_dir)
+    except dbdreader.DbdError as exc:
+        _log_missing_cac(exc, filepath, cac_dir)
+        return None
+    except Exception as exc:
+        logger.debug("Cannot open %s: %s", filepath, exc)
+        return None
+
 
 # ── Low-level DBD helpers ──────────────────────────────────────────────────────
 
 def _safe_get(dbd, var):
-    """Return (time, values) or two empty arrays if the variable is absent."""
     try:
         return dbd.get(var)
     except Exception:
@@ -44,7 +92,6 @@ def _safe_get(dbd, var):
 
 
 def _extract_science(dbd):
-    """Pull (time, temp, pressure, cond) from a DBD object."""
     t,  temp = _safe_get(dbd, 'sci_water_temp')
     _,  pres = _safe_get(dbd, 'sci_water_pressure')
     _,  cond = _safe_get(dbd, 'sci_water_cond')
@@ -52,21 +99,16 @@ def _extract_science(dbd):
 
 
 def _extract_gps(dbd):
-    """Pull (time, lon, lat) from a DBD object."""
     t,  lon = _safe_get(dbd, 'm_lon')
     _,  lat = _safe_get(dbd, 'm_lat')
     return t, lon, lat
 
 
 def _compute_profile(t_sci, temp, pres, cond, t_gps, lon, lat):
-    """
-    Bin science data onto BINS depth grid.
-    Returns a profile dict or None if data is insufficient.
-    """
     if not (len(pres) > 0 and len(lon) > 0 and len(lat) > 0 and len(t_gps) > 0):
         return None
 
-    depth = pres * 10   # dbar → metres (approx)
+    depth = pres * 10
     ix = (BINS >= depth.min()) & (BINS <= depth.max())
     if not ix.any():
         return None
@@ -74,7 +116,7 @@ def _compute_profile(t_sci, temp, pres, cond, t_gps, lon, lat):
     temp_profile = np.full(len(BINS), np.nan)
     temp_profile[ix] = np.interp(BINS[ix], depth, temp)
 
-    cond_mscm = cond * 10   # S/m → mS/cm
+    cond_mscm = cond * 10
     psal = gsw.SP_from_C(cond_mscm, temp, pres)
     sal_profile = np.full(len(BINS), np.nan)
     sal_profile[ix] = np.interp(BINS[ix], depth, psal)
@@ -90,101 +132,89 @@ def _compute_profile(t_sci, temp, pres, cond, t_gps, lon, lat):
 
 # ── Per-file-type processors ───────────────────────────────────────────────────
 
-def _process_pair(sci_path, gps_path):
-    """
-    Process a science file + separate GPS/companion file.
-    Used for .tcd/.scd, .tcd/.sbd, and .tbd/.sbd combinations.
-    """
+def _process_pair(sci_path, gps_path, cac_dir):
+    sci_dbd = _open_dbd(sci_path, cac_dir)
+    if sci_dbd is None:
+        return None
+    gps_dbd = _open_dbd(gps_path, cac_dir)
+    if gps_dbd is None:
+        return None
     try:
-        sci_dbd = DBD(sci_path)
-        gps_dbd = DBD(gps_path)
         t_sci, temp, pres, cond = _extract_science(sci_dbd)
         t_gps, lon, lat          = _extract_gps(gps_dbd)
         return _compute_profile(t_sci, temp, pres, cond, t_gps, lon, lat)
     except Exception as exc:
-        logger.debug("Skipping pair %s + %s: %s", sci_path, gps_path, exc)
+        logger.debug("Error processing pair %s + %s: %s", sci_path, gps_path, exc)
         return None
 
 
-def _process_sbd_standalone(sbd_path):
-    """
-    Process a standalone .sbd file that carries both science and GPS variables.
-    """
+def _process_sbd_standalone(sbd_path, cac_dir):
+    dbd = _open_dbd(sbd_path, cac_dir)
+    if dbd is None:
+        return None
     try:
-        dbd = DBD(sbd_path)
         t_sci, temp, pres, cond = _extract_science(dbd)
         t_gps, lon, lat          = _extract_gps(dbd)
         return _compute_profile(t_sci, temp, pres, cond, t_gps, lon, lat)
     except Exception as exc:
-        logger.debug("Skipping standalone %s: %s", sbd_path, exc)
+        logger.debug("Error processing standalone %s: %s", sbd_path, exc)
         return None
 
 
 # ── Directory-level processor ──────────────────────────────────────────────────
 
-def process_glider(data_dir, output_dir, glider_name):
+def process_glider(data_dir, output_dir, glider_name, cac_dir):
     """
     Process all supported binary files in data_dir.
-    Writes per-mission NetCDF files to output_dir.
-    Returns the number of mission files written.
-
-    Priority order per base filename:
-      1. .tcd + (.scd or .sbd)
-      2. .tbd + .sbd
-      3. .sbd standalone (only if not already used as a GPS companion above)
+    cac_dir must point to a directory containing the .cac cache files
+    required by dbdreader.  If a cache file is missing a WARNING is logged
+    naming the exact file needed.
     """
     profiles = []
-    used_as_companion = set()   # absolute paths of files consumed as GPS pairs
+    used_as_companion = set()
 
     # ── 1. .tcd science files ──────────────────────────────────────────────────
     for tcd in sorted(glob.glob(os.path.join(data_dir, '*.tcd'))):
         base = os.path.splitext(tcd)[0]
-        paired = False
         for gps_ext in ('.scd', '.sbd'):
             gps_path = base + gps_ext
             if os.path.exists(gps_path):
-                r = _process_pair(tcd, gps_path)
+                r = _process_pair(tcd, gps_path, cac_dir)
                 if r:
                     profiles.append(r)
                 used_as_companion.add(os.path.abspath(gps_path))
-                paired = True
                 break
-        if not paired:
-            logger.debug("No GPS companion found for %s", tcd)
 
     # ── 2. .tbd science files ──────────────────────────────────────────────────
     for tbd in sorted(glob.glob(os.path.join(data_dir, '*.tbd'))):
-        base  = os.path.splitext(tbd)[0]
+        base     = os.path.splitext(tbd)[0]
         sbd_path = base + '.sbd'
         if os.path.exists(sbd_path):
-            r = _process_pair(tbd, sbd_path)
+            r = _process_pair(tbd, sbd_path, cac_dir)
             if r:
                 profiles.append(r)
             used_as_companion.add(os.path.abspath(sbd_path))
-        else:
-            logger.debug("No .sbd companion found for %s", tbd)
 
-    # ── 3. Standalone .sbd files (not already consumed above) ─────────────────
+    # ── 3. Standalone .sbd files ───────────────────────────────────────────────
     for sbd in sorted(glob.glob(os.path.join(data_dir, '*.sbd'))):
         if os.path.abspath(sbd) not in used_as_companion:
-            r = _process_sbd_standalone(sbd)
+            r = _process_sbd_standalone(sbd, cac_dir)
             if r:
                 profiles.append(r)
 
     if not profiles:
-        logger.info("No valid profiles found in %s", data_dir)
+        logger.info("No valid profiles from '%s' (check for missing .cac files above)",
+                    glider_name)
         return 0
 
-    logger.info("'%s': %d raw profiles collected from %s",
-                glider_name, len(profiles), data_dir)
-
-    ds = _build_dataset(profiles)
+    logger.info("'%s': %d profiles collected", glider_name, len(profiles))
+    ds       = _build_dataset(profiles)
     missions = _split_by_time_gap(ds)
 
     os.makedirs(output_dir, exist_ok=True)
     for i, m in enumerate(missions):
         out_path = os.path.join(output_dir, f'mission_{i:03d}.nc')
-        m.attrs['glider'] = glider_name
+        m.attrs['glider']        = glider_name
         m.attrs['mission_index'] = i
         m.to_netcdf(out_path)
         t0 = pd.Timestamp(m['time'].values[0]).strftime('%Y-%m-%d')
@@ -230,24 +260,19 @@ def _split_by_time_gap(ds, threshold_days=MISSION_GAP_DAYS):
 
 # ── Top-level entry point ──────────────────────────────────────────────────────
 
-def process_all_gliders(raw_dir, processed_dir):
+def process_all_gliders(raw_dir, processed_dir, cac_dir):
     """
     Scan raw_dir for Slocum binary data and process every glider found.
-
-    Looks for directories named 'from-glider' first (standard SFMC mirror
-    structure), then falls back to any directory containing .tcd, .tbd, or
-    .sbd files.
-
-    Returns total number of mission files written.
+    cac_dir must contain the .cac cache files required by dbdreader.
     """
-    # Primary: find 'from-glider' subdirectories
+    os.makedirs(cac_dir, exist_ok=True)
+
     from_glider_dirs = [
         d for d in glob.glob(os.path.join(raw_dir, '**', 'from-glider'), recursive=True)
         if os.path.isdir(d)
     ]
 
     if not from_glider_dirs:
-        # Fallback: any directory containing relevant binary files
         all_bin = (
             glob.glob(os.path.join(raw_dir, '**', '*.tcd'), recursive=True)
             + glob.glob(os.path.join(raw_dir, '**', '*.tbd'), recursive=True)
@@ -261,7 +286,7 @@ def process_all_gliders(raw_dir, processed_dir):
 
     total = 0
     for fgdir in from_glider_dirs:
-        parent = os.path.dirname(fgdir)
+        parent      = os.path.dirname(fgdir)
         glider_name = (
             os.path.basename(parent)
             if os.path.basename(fgdir) == 'from-glider'
@@ -269,7 +294,7 @@ def process_all_gliders(raw_dir, processed_dir):
         )
         out_dir = os.path.join(processed_dir, glider_name)
         logger.info("Processing glider '%s' from %s", glider_name, fgdir)
-        total += process_glider(fgdir, out_dir, glider_name)
+        total += process_glider(fgdir, out_dir, glider_name, cac_dir)
 
     logger.info("Processing complete: %d mission files written", total)
     return total

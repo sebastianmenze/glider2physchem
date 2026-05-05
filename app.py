@@ -46,8 +46,10 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR      = os.environ.get('DATA_DIR', os.path.join(_HERE, 'data'))
 RAW_DIR       = os.path.join(DATA_DIR, 'raw')
 PROCESSED_DIR = os.path.join(DATA_DIR, 'processed')
+CAC_DIR       = os.environ.get('CAC_DIR', os.path.join(DATA_DIR, 'cac'))
 os.makedirs(RAW_DIR, exist_ok=True)
 os.makedirs(PROCESSED_DIR, exist_ok=True)
+os.makedirs(CAC_DIR, exist_ok=True)
 
 SFMC_HOST      = os.environ.get('SFMC_HOST', 'sfmc.webbresearch.com')
 SFMC_USER      = os.environ.get('SFMC_USER', '')
@@ -184,7 +186,7 @@ def run_sync():
                         remote_path=remote_path,
                         local_path=os.path.join(RAW_DIR, local_subdir),
                     )
-            process_all_gliders(RAW_DIR, PROCESSED_DIR)
+            process_all_gliders(RAW_DIR, PROCESSED_DIR, CAC_DIR)
             _last_sync_time = datetime.now(timezone.utc)
             logger.info("Sync complete at %s", _last_sync_time)
         except Exception as exc:
