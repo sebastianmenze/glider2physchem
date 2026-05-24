@@ -13,7 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY downloader.py processor.py app.py ./
+COPY downloader.py processor.py app.py npc_export.py physchem_upload.py ./
+COPY assets/ ./assets/
 COPY .env.example .
 
 VOLUME ["/app/data"]

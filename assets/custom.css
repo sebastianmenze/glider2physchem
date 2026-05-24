@@ -1,0 +1,112 @@
+
+/* ── Profile info text ───────────────────────────────────────────────────── */
+#profile-info {
+    font-size: 0.75rem;
+    line-height: 1.4;
+}
+
+/* ── Slider: hide all tooltips and internal value input ─────────────────── */
+.rc-slider-tooltip {
+    display: none !important;
+}
+
+.dash-slider input,
+.dash-slider-container input,
+.dash-range-slider-input,
+input[class*="dash-range-slider"] {
+    display: none !important;
+    width:   0 !important;
+    height:  0 !important;
+    position: absolute !important;
+    pointer-events: none !important;
+}
+
+/* ── Slider: track + handle + rail ──────────────────────────────────────── */
+.rc-slider-track {
+    background-color: #4a9eda !important;
+    height: 6px !important;
+}
+
+.rc-slider-handle {
+    border-color: #4a9eda !important;
+    background-color: #4a9eda !important;
+    margin-top: -5px !important;
+    width: 16px !important;
+    height: 16px !important;
+}
+
+/* Full-range rail: visible gray so user can see the whole draggable extent */
+.rc-slider-rail {
+    background-color: #6c757d !important;
+    height: 6px !important;
+}
+
+/* ── Dropdowns: dark theme, uniform border-radius ────────────────────────── */
+.Select-control {
+    background-color: #2b3035 !important;
+    border: 1px solid #454d55 !important;
+    border-radius: 4px !important;
+    color: #dee2e6 !important;
+    box-shadow: none !important;
+}
+
+.Select.is-focused > .Select-control,
+.Select.is-open > .Select-control {
+    background-color: #2b3035 !important;
+    border-color: #4a9eda !important;
+    border-radius: 4px !important;
+    box-shadow: none !important;
+}
+
+.Select-value-label,
+.Select-multi-value-wrapper,
+.Select-input > input {
+    color: #111 !important;
+}
+
+.Select-placeholder {
+    color: #6c757d !important;
+}
+
+.Select-arrow {
+    border-top-color: #adb5bd !important;
+}
+
+.Select-clear {
+    color: #6c757d !important;
+}
+
+.Select-menu-outer {
+    background-color: #2b3035 !important;
+    border: 1px solid #454d55 !important;
+    border-radius: 4px !important;
+    margin-top: 2px !important;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
+}
+
+.Select-option {
+    background-color: #2b3035 !important;
+    color: #111 !important;
+    border-radius: 3px !important;
+}
+
+.Select-option.is-focused {
+    background-color: #375a7f !important;
+    color: #fff !important;
+}
+
+.Select-option.is-selected {
+    background-color: #2c5282 !important;
+    color: #fff !important;
+}
+
+.VirtualizedSelectOption {
+    color: #111 !important;
+    background-color: #2b3035 !important;
+}
+
+.VirtualizedSelectFocusedOption {
+    background-color: #375a7f !important;
+    color: #fff !important;
+}
+

@@ -1,0 +1,32 @@
+# SFTP server — receives incoming glider binary files.
+#
+# Start both services:
+#   docker compose -f docker-compose.yml -f docker-compose.sftp.yml up -d
+#
+# Stop / remove just this service:
+#   docker compose -f docker-compose.yml -f docker-compose.sftp.yml stop sftp-server
+#
+# Remove completely: just delete this file and restart with docker-compose.yml only.
+#
+# Uploaded files land in ./data/raw/ on the host, which is the same directory
+# the glider-monitor reads for processing.  Glider systems should push with
+# the layout:   /<glider_name>/from-glider/<file>.tbd
+#
+# Print connection details:
+#   python sftp_server_info.py
+
+services:
+  sftp-server:
+    image: atmoz/sftp:latest
+    container_name: glider-sftp
+    ports:
+      - "${SFTP_LISTEN_PORT:-2222}:22"
+    volumes:
+      - ./data/raw/alseamar:/home/${SFTP_USER:-glider}
+    # Format: user:password:uid  — uid 1000 matches the default Linux user so
+    # file ownership in ./data/raw/alseamar is sensible.  Adjust uid if your
+    # host user has a different id (run `id -u` on the host to check).
+    command: "${SFTP_USER:-glider}:${SFTP_PASSWORD:?SFTP_PASSWORD must be set in .env}:1000"
+    env_file:
+      - .env
+    restart: unless-stopped

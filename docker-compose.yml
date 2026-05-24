@@ -5,6 +5,8 @@ services:
       - "8090:8090"
     volumes:
       - ./data:/app/data
+    environment:
+      - HDF5_USE_FILE_LOCKING=FALSE
     env_file:
       - .env
     restart: unless-stopped
