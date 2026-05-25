@@ -645,11 +645,11 @@ def update_controls(nc_path):
     if not nc_path or not os.path.exists(nc_path):
         return none5
     try:
-        with xr.open_dataset(nc_path) as ds:
+        with xr.open_dataset(nc_path, engine='h5netcdf') as ds:
             times = pd.to_datetime(ds['time'].values)
         d0 = times[0].strftime('%Y-%m-%d')
         d1 = times[-1].strftime('%Y-%m-%d')
-        return d0, d1, len(times) - 1, len(times) - 1, {'start': d0, 'end': d1}
+        return d0, d1, len(times) - 1, 0, {'start': d0, 'end': d1}
     except Exception:
         return none5
 
@@ -680,7 +680,7 @@ def update_date_options(nc_path):
     if not nc_path or not os.path.exists(nc_path):
         return [], []
     try:
-        with xr.open_dataset(nc_path) as ds:
+        with xr.open_dataset(nc_path, engine='h5netcdf') as ds:
             times = pd.to_datetime(ds['time'].values)
         dates = sorted({t.strftime('%Y-%m-%d') for t in times})
         options = [{'label': d, 'value': d} for d in dates]
